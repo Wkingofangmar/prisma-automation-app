@@ -13,8 +13,9 @@ st.sidebar.header("Pipeline Steps")
 step = st.sidebar.radio("Select a step:", [
     "1. Search Databases",
     "2. Filter Results",
-    "3. Export Data",
-    "4. PDF LLM Extraction"
+    "3. Export Data (Optional Rayyan Route)",
+    "4. Deduplicate & Screen (In-App Route)",
+    "5. PDF LLM Extraction"
 ])
 
 st.divider()
@@ -251,16 +252,15 @@ elif step == "2. Filter Results":
             st.write("### Current Curated List Preview")
             st.dataframe(st.session_state['filtered_results'], hide_index=True)
 # STEP 3: EXPORT DATA
-elif step == "3. Export Data":
-    st.subheader("Step 3: Export Curated Results")
+elif step == "3. Export Data (Optional Rayyan Route)":
+    st.subheader("Step 3: Export Curated Results (Optional)")
     
-    # Check if we have filtered data to export
     if 'filtered_results' not in st.session_state or st.session_state['filtered_results'].empty:
         st.warning("No filtered results found. Please go back to Step 2 and save your curated list first.")
     else:
-        st.write("Your curated list of papers is ready. Choose your preferred export format below.")
+        st.write("If you prefer to use **Rayyan** for your title/abstract screening, download your files below. Otherwise, skip to Step 4 to screen directly in this app.")
         
-        # Load the final dataset
+        # Load the dataset from Step 2
         final_df = st.session_state['filtered_results']
         
         # Show a final preview
@@ -322,3 +322,205 @@ elif step == "3. Export Data":
                 use_container_width=True,
                 help="Automatically renames columns so Rayyan accepts the upload flawlessly."
             )
+# STEP 4: DEDUPLICATION & SCREENING (In-App Route)
+elif step == "4. Deduplicate & Screen (In-App Route)":
+    st.subheader("Step 4: Title & Abstract Screening (Rayyan Bypass)")
+    
+    if 'filtered_results' not in st.session_state or st.session_state['filtered_results'].empty:
+        st.warning("No results found. Please complete Step 2 first.")
+    else:
+        # Initialize the screening dataframe in session state so changes persist
+        if 'screening_data' not in st.session_state:
+            df = st.session_state['filtered_results'].copy()
+            df['Screening_Keep'] = True
+            st.session_state['screening_data'] = df
+        
+        df_screen = st.session_state['screening_data']
+        
+        # --- 1. DEDUPLICATION MODULE ---
+        st.write("### 1. Duplicate Checker")
+        
+        df_screen['temp_title'] = df_screen['Title'].str.lower().str.strip()
+        title_dupes = df_screen.duplicated(subset=['temp_title'], keep=False)
+        doi_dupes = df_screen.duplicated(subset=['DOI'], keep=False) & (df_screen['DOI'] != "No DOI")
+        
+        duplicates_df = df_screen[title_dupes | doi_dupes].sort_values(by=['temp_title'])
+        
+        if not duplicates_df.empty:
+            st.warning(f"Found {len(duplicates_df)} potential duplicate records! They are grouped together below.")
+            st.write("Uncheck the 'Keep?' box for the duplicate versions you want to discard.")
+            
+            edited_dupes = st.data_editor(
+                duplicates_df,
+                column_config={
+                    "Screening_Keep": st.column_config.CheckboxColumn("Keep?", default=True)
+                },
+                column_order=["Screening_Keep", "Title", "Author(s)", "Year", "Journal", "DOI"],
+                disabled=["Title", "Author(s)", "Year", "Journal", "Abstract", "Keywords", "DOI", "temp_title"],
+                hide_index=True,
+                use_container_width=True
+            )
+            st.session_state['screening_data'].loc[edited_dupes.index, 'Screening_Keep'] = edited_dupes['Screening_Keep']
+        else:
+            st.success("No duplicates found!")
+            
+        st.divider()
+        
+        # --- 2. KEYWORD SCREENING MODULE ---
+        st.write("### 2. Keyword Screening (Title / Abstract / Keywords)")
+        st.write("Filter the dataset for specific inclusion/exclusion criteria. Uncheck papers that don't meet your PRISMA criteria.")
+        
+        search_filter = st.text_input("🔍 Search for keywords (e.g., 'microplastic', 'ingestion'):", placeholder="Type to filter...")
+        
+        if search_filter:
+            mask = df_screen[['Title', 'Abstract', 'Keywords']].astype(str).apply(lambda col: col.str.contains(search_filter, case=False)).any(axis=1)
+            display_df = df_screen[mask]
+        else:
+            display_df = df_screen
+            
+        col1, col2, col3 = st.columns([1, 1, 4])
+        with col1:
+            btn_label_1 = "Select Visible" if search_filter else "Select All"
+            if st.button(btn_label_1, use_container_width=True):
+                st.session_state['screening_data'].loc[display_df.index, 'Screening_Keep'] = True
+                st.rerun()
+                
+        with col2:
+            btn_label_2 = "Deselect Visible" if search_filter else "Deselect All"
+            if st.button(btn_label_2, use_container_width=True):
+                st.session_state['screening_data'].loc[display_df.index, 'Screening_Keep'] = False
+                st.rerun()
+        
+        st.caption(f"Showing {len(display_df)} of {len(df_screen)} records.")
+        
+        edited_display_df = st.data_editor(
+            display_df,
+            column_config={
+                "Screening_Keep": st.column_config.CheckboxColumn("Keep?", default=True)
+            },
+            column_order=["Screening_Keep", "Title", "Author(s)", "Year", "Abstract", "Keywords"],
+            disabled=["Title", "Author(s)", "Year", "Journal", "Abstract", "Keywords", "DOI", "temp_title"], 
+            hide_index=True,
+            use_container_width=True,
+            height=500 
+        )
+        
+        st.session_state['screening_data'].loc[edited_display_df.index, 'Screening_Keep'] = edited_display_df['Screening_Keep']
+        
+        # --- 3. SAVE AND EXPORT MODULE ---
+        if st.button("Save Final Screened Results", type="primary"):
+            master_df = st.session_state['screening_data']
+            final_screened_df = master_df[master_df["Screening_Keep"] == True].copy()
+            final_screened_df = final_screened_df.drop(columns=["Screening_Keep", "temp_title"], errors="ignore")
+            
+            st.session_state['screened_results'] = final_screened_df
+            st.success(f"Screening complete! You kept {len(final_screened_df)} out of {len(master_df)} papers.")
+            
+        # If they saved, offer them a quick download of the final list
+        if 'screened_results' in st.session_state:
+            st.divider()
+            st.write("### Final Curated List Ready")
+            csv_data = st.session_state['screened_results'].to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📄 Download Final Screened CSV",
+                data=csv_data,
+                file_name="PRISMA_Final_Screened.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            st.info("You can now proceed to Step 5: PDF LLM Extraction.")
+
+# STEP 5: PDF LLM EXTRACTION
+elif step == "5. PDF LLM Extraction":
+    st.subheader("Step 4: AI-Powered PDF Extraction")
+    st.write("Upload a downloaded paper to automatically extract structured data.")
+    
+    # Secure API Key input
+    api_key = st.text_input(
+        "Enter your Google Gemini API Key:", 
+        type="password", 
+        help="Get a free API key at aistudio.google.com"
+    )
+    
+    st.divider()
+    
+    # Dynamic variables from your prompt
+    research_subject = st.text_input("Target Species / Research Subject:", placeholder="e.g., Caretta caretta")
+    uploaded_file = st.file_uploader("Upload a PDF paper", type="pdf")
+    
+    # Initialize a place to store our extracted rows for Step 5
+    if 'extraction_history' not in st.session_state:
+        st.session_state['extraction_history'] = []
+
+    if st.button("Extract Data", type="primary"):
+        if not api_key:
+            st.error("Please enter your API Key first.")
+        elif not research_subject:
+            st.error("Please enter a research subject to guide the AI.")
+        elif not uploaded_file:
+            st.error("Please upload a PDF file.")
+        else:
+            with st.spinner("Analyzing PDF... (Running OCR, translation, and data extraction)"):
+                try:
+                    import google.generativeai as genai
+                    import tempfile
+                    import os
+                    
+                    # Configure the API
+                    genai.configure(api_key=api_key)
+                    
+                    # The Gemini File API requires a file path, so we temporarily save the Streamlit upload
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                        tmp_file.write(uploaded_file.getvalue())
+                        tmp_file_path = tmp_file.name
+
+                    # Upload the document to Gemini's secure temporary storage
+                    gemini_file = genai.upload_file(path=tmp_file_path)
+                    
+                    # Initialize the model (1.5 Flash is incredibly fast and perfect for this)
+                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    
+                    # Your exact prompt with the dynamic subject injected
+                    prompt = f"""You are an expert researcher. Extract the primary research data specifically related to the [{research_subject}] from the provided paper.
+CRITICAL INSTRUCTIONS:
+Focus ONLY on the primary findings of this specific paper.
+DO NOT extract data, authors, or studies from the bibliography, reference list, or literature review sections.
+Since I am uploading ONE paper, your output table must contain EXACTLY ONE ROW of data.
+If the document is a scanned PDF or image, perform OCR. If the text is not in English, translate it into English before processing.
+Please format your final output strictly as a Markdown table with the following 5 columns:
+Study: The Author and Year of the uploaded paper (e.g., Iversen et al., 2013).
+Country: The specific country where the study or observations took place.
+Original Language: The language the provided PDF is written in.
+Primary Theme: You MUST choose exactly ONE of the following exact phrases. It is STRICTLY FORBIDDEN to invent your own categories. Choose only from this list:
+"Taxonomy & Morphology"
+"Distribution & Habitat Preferences"
+"Ecology & Behavior"
+"Conservation & Threats"
+Key Finding: A very brief, 1-to-2 sentence summary of this specific paper's primary conclusion.
+Only provide the 1-row table in your response, with no extra conversational text."""
+
+                    # Generate the extraction
+                    response = model.generate_content([gemini_file, prompt])
+                    
+                    # Clean up: delete the file from Google's servers and your app's temporary local storage
+                    genai.delete_file(gemini_file.name)
+                    os.remove(tmp_file_path)
+                    
+                    st.success("Extraction Complete!")
+                    
+                    # Display the extracted markdown table
+                    st.markdown("### Extracted Result")
+                    st.markdown(response.text)
+                    
+                    # Save the raw markdown to session state so we can compile it in Step 5
+                    st.session_state['extraction_history'].append(response.text)
+                    
+                except Exception as e:
+                    st.error(f"An error occurred during extraction: {e}")
+
+    # Display the running log of extracted tables
+    if st.session_state.get('extraction_history'):
+        st.divider()
+        st.write(f"### Current Session Extractions ({len(st.session_state['extraction_history'])} papers processed)")
+        for idx, res in enumerate(st.session_state['extraction_history']):
+            st.markdown(res)
