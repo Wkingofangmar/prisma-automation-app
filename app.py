@@ -19,9 +19,23 @@ step = st.sidebar.radio("Select a step:", [
 
 st.divider()
 
-# Core Function: Search OpenAlex
-# Core Function: Search OpenAlex
-# Core Function: Search OpenAlex
+# Helper Function: Decode OpenAlex Inverted Index
+def reconstruct_abstract(inverted_index):
+    if not inverted_index or not isinstance(inverted_index, dict):
+        return "No abstract available."
+    
+    # Create a list of tuples: (position, word)
+    word_index = []
+    for word, positions in inverted_index.items():
+        for pos in positions:
+            word_index.append((pos, word))
+    
+    # Sort the list by the numerical position to put the sentence in order
+    word_index.sort(key=lambda x: x[0])
+    
+    # Extract just the words and join them with spaces
+    return " ".join([word for pos, word in word_index])
+
 # Core Function: Search OpenAlex
 def search_openalex(query, max_results):
     try:
@@ -72,12 +86,14 @@ def search_openalex(query, max_results):
                 title = res.get("title") or "No Title"
                 year = res.get("publication_year") or "N/A"
                 doi = res.get("doi") or "No DOI"
-                abstract = res.get("abstract") or "No abstract available."
-                # NEW: Extract OpenAlex Keywords
+                
+                # FIXED: Extract the scrambled index and reconstruct it
+                raw_inverted_index = res.get("abstract_inverted_index")
+                abstract = reconstruct_abstract(raw_inverted_index)
+                
+                # Extract OpenAlex Keywords
                 raw_keywords = res.get("keywords") or []
-                # Safely grab the 'display_name' from each keyword dictionary
                 keyword_names = [kw.get("display_name") for kw in raw_keywords if isinstance(kw, dict) and kw.get("display_name")]
-                # Join them with semicolons (standard format for Rayyan/Excel)
                 keywords_string = "; ".join(keyword_names) if keyword_names else "No keywords available."
 
                 data.append({
@@ -87,7 +103,7 @@ def search_openalex(query, max_results):
                     "Year": str(year),
                     "Journal": str(journal_name),
                     "Abstract": str(abstract),
-                    "Keywords": str(keywords_string), # NEW: Add to our dataframe
+                    "Keywords": str(keywords_string), 
                     "DOI": str(doi)
                 })
                 
