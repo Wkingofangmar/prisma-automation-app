@@ -224,3 +224,73 @@ elif step == "2. Filter Results":
             st.divider()
             st.write("### Current Curated List Preview")
             st.dataframe(st.session_state['filtered_results'], hide_index=True)
+# STEP 3: EXPORT DATA
+elif step == "3. Export Data":
+    st.subheader("Step 3: Export Curated Results")
+    
+    # Check if we have filtered data to export
+    if 'filtered_results' not in st.session_state or st.session_state['filtered_results'].empty:
+        st.warning("No filtered results found. Please go back to Step 2 and save your curated list first.")
+    else:
+        st.write("Your curated list of papers is ready. Choose your preferred export format below.")
+        
+        # Load the final dataset
+        final_df = st.session_state['filtered_results']
+        
+        # Show a final preview
+        st.dataframe(final_df, hide_index=True)
+        st.divider()
+        st.write("### Download Options")
+        
+        # Create 3 columns for side-by-side buttons
+        col1, col2, col3 = st.columns(3)
+        
+        # --- Option 1: Standard CSV ---
+        with col1:
+            csv_data = final_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📄 Download Standard CSV",
+                data=csv_data,
+                file_name="PRISMA_filtered_results.csv",
+                mime="text/csv",
+                use_container_width=True,
+                help="Standard comma-separated format."
+            )
+            
+        # --- Option 2: Excel Workbook ---
+        with col2:
+            import io
+            # We use an in-memory buffer so we don't have to save a physical file to your hard drive first
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                final_df.to_excel(writer, index=False, sheet_name="Filtered Papers")
+            
+            st.download_button(
+                label="📊 Download Excel (.xlsx)",
+                data=excel_buffer.getvalue(),
+                file_name="PRISMA_filtered_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                help="Formatted Excel workbook."
+            )
+            
+        # --- Option 3: Rayyan Compatible CSV ---
+        with col3:
+            # Rayyan requires specific lowercase headers to auto-map the data
+            rayyan_df = final_df.rename(columns={
+                "Title": "title",
+                "Author(s)": "authors",
+                "Year": "year",
+                "Journal": "journal",
+                "DOI": "url"  # Rayyan maps URLs well; treating the DOI as the URL is standard practice here
+            })
+            rayyan_csv = rayyan_df.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                label="🔄 Download for Rayyan",
+                data=rayyan_csv,
+                file_name="Rayyan_Import.csv",
+                mime="text/csv",
+                use_container_width=True,
+                help="Automatically renames columns so Rayyan accepts the upload flawlessly."
+            )
