@@ -153,6 +153,20 @@ elif step == "2. Filter Results":
     else:
         st.write("Review your search results below. Uncheck the 'Keep' box for any papers you want to exclude (e.g., GBIF datasets, irrelevant titles).")
         
+        # --- NEW: Bulk Select/Deselect Buttons ---
+        col1, col2, col3 = st.columns([1, 1, 4]) # Creates two small columns for buttons and empty space
+        
+        with col1:
+            if st.button("Select All", use_container_width=True):
+                st.session_state['raw_results']['Keep'] = True
+                st.rerun() # Refreshes the page to show the updated table
+                
+        with col2:
+            if st.button("Deselect All", use_container_width=True):
+                st.session_state['raw_results']['Keep'] = False
+                st.rerun()
+        # -----------------------------------------
+        
         # Load the raw dataframe
         df_to_edit = st.session_state['raw_results']
         
@@ -174,11 +188,14 @@ elif step == "2. Filter Results":
         )
         
         # Save button to lock in the filters
-        if st.button("Save Filtered Results"):
+        if st.button("Save Filtered Results", type="primary"):
+            # Overwrite the raw results with the edited dataframe so manual checks persist across pages
+            st.session_state['raw_results'] = edited_df 
+            
             # Filter the dataframe to only rows where 'Keep' is True
             final_filtered_df = edited_df[edited_df["Keep"] == True].copy()
             
-            # Optionally, we can drop the 'Keep' column now since it served its purpose
+            # Drop the 'Keep' column now since it served its purpose
             final_filtered_df = final_filtered_df.drop(columns=["Keep"])
             
             # Save the curated list to session state for the next steps
