@@ -142,3 +142,53 @@ if step == "1. Search Databases":
     if 'raw_results' in st.session_state:
         st.write("### Current Search Results")
         st.dataframe(st.session_state['raw_results'])
+
+# STEP 2: FILTER RESULTS
+elif step == "2. Filter Results":
+    st.subheader("Step 2: Manually Filter 'Noise' from Results")
+    
+    # Check if the user has actually run a search yet
+    if 'raw_results' not in st.session_state or st.session_state['raw_results'].empty:
+        st.warning("No search results found. Please go back to Step 1 and run a search first.")
+    else:
+        st.write("Review your search results below. Uncheck the 'Keep' box for any papers you want to exclude (e.g., GBIF datasets, irrelevant titles).")
+        
+        # Load the raw dataframe
+        df_to_edit = st.session_state['raw_results']
+        
+        # Display the interactive data editor
+        edited_df = st.data_editor(
+            df_to_edit,
+            column_config={
+                "Keep": st.column_config.CheckboxColumn(
+                    "Keep?",
+                    help="Uncheck to remove this paper from your final export.",
+                    default=True,
+                )
+            },
+            # Disable editing on metadata to prevent accidental typos
+            disabled=["Title", "Author(s)", "Year", "Journal", "DOI"], 
+            hide_index=True,
+            use_container_width=True,
+            height=600 # Gives a nice large viewing window
+        )
+        
+        # Save button to lock in the filters
+        if st.button("Save Filtered Results"):
+            # Filter the dataframe to only rows where 'Keep' is True
+            final_filtered_df = edited_df[edited_df["Keep"] == True].copy()
+            
+            # Optionally, we can drop the 'Keep' column now since it served its purpose
+            final_filtered_df = final_filtered_df.drop(columns=["Keep"])
+            
+            # Save the curated list to session state for the next steps
+            st.session_state['filtered_results'] = final_filtered_df
+            
+            st.success(f"Filtered list saved! You kept {len(final_filtered_df)} out of {len(edited_df)} papers.")
+            st.info("You can now proceed to Step 3: Export Data.")
+            
+        # Quick preview of the current saved filtered list if it exists
+        if 'filtered_results' in st.session_state:
+            st.divider()
+            st.write("### Current Curated List Preview")
+            st.dataframe(st.session_state['filtered_results'], hide_index=True)
