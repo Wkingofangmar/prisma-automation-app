@@ -22,34 +22,44 @@ st.divider()
 # Core Function: Search OpenAlex
 def search_openalex(query):
     try:
-        # Fetch the top 50 works matching the search query
-        # You can increase the per_page limit later if needed
-        results = Works().search(query).paginate(per_page=50, page=1)
+        # Fetch the works matching the search query
+        # Using .get() on the query object itself pulls the list of results
+        query_result = Works().search(query).paginate(per_page=50, page=1)
         
         data = []
-        for res in results:
-            # Safely extract author names
-            authorships = res.get("authorships", [])
-            author_names = [a.get("author", {}).get("display_name", "") for a in authorship]
+        # Convert the OpenAlex list object into a standard Python list loop
+        for res in query_result:
+            # Safely extract author names from the individual result dictionary
+            authorships = res.get("authorships", []) if isinstance(res, dict) else getattr(res, "authorships", [])
+            author_names = [a.get("author", {}).get("display_name", "") for a in authorship] if authorship else []
             author_string = ", ".join(filter(None, author_names))
             
             # Safely extract journal/source name
-            primary_location = res.get("primary_location", {}) or {}
-            source = primary_location.get("source", {}) or {}
-            journal_name = source.get("display_name", "Unknown Journal")
+            primary_location = res.get("primary_location", {}) if isinstance(res, dict) else getattr(res, "primary_location", {})
+            primary_location = primary_location or {}
+            source = primary_location.get("source", {}) if isinstance(primary_location, dict) else getattr(primary_location, "source", {})
+            source = source or {}
+            journal_name = source.get("display_name", "Unknown Journal") if isinstance(source, dict) else getattr(source, "display_name", "Unknown Journal")
             
+            # Safely get metadata fields
+            title = res.get("title", "No Title") if isinstance(res, dict) else getattr(res, "title", "No Title")
+            year = res.get("publication_year", "N/A") if isinstance(res, dict) else getattr(res, "publication_year", "N/A")
+            doi = res.get("doi", "No DOI") if isinstance(res, dict) else getattr(res, "doi", "No DOI")
+
             data.append({
                 "Keep": True,  # Checkbox for Step 2
-                "Title": res.get("title", "No Title"),
+                "Title": title,
                 "Author(s)": author_string if author_string else "Unknown Authors",
-                "Year": res.get("publication_year", "N/A"),
+                "Year": year,
                 "Journal": journal_name,
-                "DOI": res.get("doi", "No DOI")
+                "DOI": doi
             })
         
         return pd.DataFrame(data)
     except Exception as e:
         st.error(f"An error occurred during the search: {e}")
+        import traceback
+        st.code(traceback.format_exc()) # This will show us the exact line if anything else breaks
         return pd.DataFrame()
 
 # STEP 1: SEARCH DATABASES
