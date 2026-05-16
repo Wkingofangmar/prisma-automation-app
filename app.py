@@ -72,6 +72,13 @@ def search_openalex(query, max_results):
                 title = res.get("title") or "No Title"
                 year = res.get("publication_year") or "N/A"
                 doi = res.get("doi") or "No DOI"
+                abstract = res.get("abstract") or "No abstract available."
+                # NEW: Extract OpenAlex Keywords
+                raw_keywords = res.get("keywords") or []
+                # Safely grab the 'display_name' from each keyword dictionary
+                keyword_names = [kw.get("display_name") for kw in raw_keywords if isinstance(kw, dict) and kw.get("display_name")]
+                # Join them with semicolons (standard format for Rayyan/Excel)
+                keywords_string = "; ".join(keyword_names) if keyword_names else "No keywords available."
 
                 data.append({
                     "Keep": True,
@@ -79,6 +86,8 @@ def search_openalex(query, max_results):
                     "Author(s)": str(author_string),
                     "Year": str(year),
                     "Journal": str(journal_name),
+                    "Abstract": str(abstract),
+                    "Keywords": str(keywords_string), # NEW: Add to our dataframe
                     "DOI": str(doi)
                 })
                 
@@ -195,7 +204,8 @@ elif step == "2. Filter Results":
                     default=True,
                 )
             },
-            disabled=["Title", "Author(s)", "Year", "Journal", "DOI"], 
+            # NEW: Added "Keywords" to the disabled list
+            disabled=["Title", "Author(s)", "Year", "Journal", "Abstract", "Keywords", "DOI"], 
             hide_index=True,
             use_container_width=True,
             height=500 
@@ -282,7 +292,9 @@ elif step == "3. Export Data":
                 "Author(s)": "authors",
                 "Year": "year",
                 "Journal": "journal",
-                "DOI": "url"  # Rayyan maps URLs well; treating the DOI as the URL is standard practice here
+                "Abstract": "abstract",
+                "Keywords": "keywords", # NEW: Map keywords perfectly for Rayyan
+                "DOI": "url"  
             })
             rayyan_csv = rayyan_df.to_csv(index=False).encode('utf-8')
             
