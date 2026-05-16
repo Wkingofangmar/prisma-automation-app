@@ -20,18 +20,17 @@ step = st.sidebar.radio("Select a step:", [
 st.divider()
 
 # Core Function: Search OpenAlex
+# Core Function: Search OpenAlex
 def search_openalex(query):
     try:
         # Fetch the works matching the search query
-        # Using .get() on the query object itself pulls the list of results
         query_result = Works().search(query).paginate(per_page=50, page=1)
         
         data = []
-        # Convert the OpenAlex list object into a standard Python list loop
         for res in query_result:
-            # Safely extract author names from the individual result dictionary
+            # FIXED: Changed 'authorship' to 'authorships' in the list comprehension and condition
             authorships = res.get("authorships", []) if isinstance(res, dict) else getattr(res, "authorships", [])
-            author_names = [a.get("author", {}).get("display_name", "") for a in authorship] if authorship else []
+            author_names = [a.get("author", {}).get("display_name", "") for a in authorships] if authorships else []
             author_string = ", ".join(filter(None, author_names))
             
             # Safely extract journal/source name
@@ -59,7 +58,7 @@ def search_openalex(query):
     except Exception as e:
         st.error(f"An error occurred during the search: {e}")
         import traceback
-        st.code(traceback.format_exc()) # This will show us the exact line if anything else breaks
+        st.code(traceback.format_exc()) 
         return pd.DataFrame()
 
 # STEP 1: SEARCH DATABASES
