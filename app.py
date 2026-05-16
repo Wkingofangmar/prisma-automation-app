@@ -147,32 +147,47 @@ if step == "1. Search Databases":
 elif step == "2. Filter Results":
     st.subheader("Step 2: Manually Filter 'Noise' from Results")
     
-    # Check if the user has actually run a search yet
     if 'raw_results' not in st.session_state or st.session_state['raw_results'].empty:
         st.warning("No search results found. Please go back to Step 1 and run a search first.")
     else:
-        st.write("Review your search results below. Uncheck the 'Keep' box for any papers you want to exclude (e.g., GBIF datasets, irrelevant titles).")
+        st.write("Review your search results below. Uncheck the 'Keep' box for any papers you want to exclude.")
         
-        # --- NEW: Bulk Select/Deselect Buttons ---
-        col1, col2, col3 = st.columns([1, 1, 4]) # Creates two small columns for buttons and empty space
+        # --- NEW: Custom Python-Side Search/Filter Bar ---
+        search_filter = st.text_input("🔍 Filter table to specific records (e.g., 'GBIF'):", placeholder="Type to filter...")
+        
+        # Slice the dataframe based on the custom search input
+        df_to_edit = st.session_state['raw_results']
+        if search_filter:
+            # Check if the search term exists in ANY column (case-insensitive)
+            mask = df_to_edit.astype(str).apply(lambda col: col.str.contains(search_filter, case=False)).any(axis=1)
+            display_df = df_to_edit[mask]
+        else:
+            display_df = df_to_edit
+            
+        # --- NEW: Context-Aware Bulk Buttons ---
+        col1, col2, col3 = st.columns([1, 1, 4])
         
         with col1:
-            if st.button("Select All", use_container_width=True):
-                st.session_state['raw_results']['Keep'] = True
-                st.rerun() # Refreshes the page to show the updated table
+            # Change label based on whether a filter is active
+            btn_label_1 = "Select Visible" if search_filter else "Select All"
+            if st.button(btn_label_1, use_container_width=True):
+                # Apply True only to the indices currently visible in display_df
+                st.session_state['raw_results'].loc[display_df.index, 'Keep'] = True
+                st.rerun()
                 
         with col2:
-            if st.button("Deselect All", use_container_width=True):
-                st.session_state['raw_results']['Keep'] = False
+            btn_label_2 = "Deselect Visible" if search_filter else "Deselect All"
+            if st.button(btn_label_2, use_container_width=True):
+                # Apply False only to the indices currently visible in display_df
+                st.session_state['raw_results'].loc[display_df.index, 'Keep'] = False
                 st.rerun()
-        # -----------------------------------------
+                
+        # Show the user how many records they are looking at
+        st.caption(f"Showing {len(display_df)} of {len(df_to_edit)} total records.")
         
-        # Load the raw dataframe
-        df_to_edit = st.session_state['raw_results']
-        
-        # Display the interactive data editor
-        edited_df = st.data_editor(
-            df_to_edit,
+        # Display the interactive data editor with the SLICED data
+        edited_display_df = st.data_editor(
+            display_df,
             column_config={
                 "Keep": st.column_config.CheckboxColumn(
                     "Keep?",
@@ -180,28 +195,28 @@ elif step == "2. Filter Results":
                     default=True,
                 )
             },
-            # Disable editing on metadata to prevent accidental typos
             disabled=["Title", "Author(s)", "Year", "Journal", "DOI"], 
             hide_index=True,
             use_container_width=True,
-            height=600 # Gives a nice large viewing window
+            height=500 
         )
+        
+        # Sync any manual, individual checkbox clicks back to the master dataframe
+        st.session_state['raw_results'].loc[edited_display_df.index, 'Keep'] = edited_display_df['Keep']
         
         # Save button to lock in the filters
         if st.button("Save Filtered Results", type="primary"):
-            # Overwrite the raw results with the edited dataframe so manual checks persist across pages
-            st.session_state['raw_results'] = edited_df 
+            # Work directly off the master dataframe
+            master_df = st.session_state['raw_results']
             
-            # Filter the dataframe to only rows where 'Keep' is True
-            final_filtered_df = edited_df[edited_df["Keep"] == True].copy()
-            
-            # Drop the 'Keep' column now since it served its purpose
+            # Filter down to only what is kept
+            final_filtered_df = master_df[master_df["Keep"] == True].copy()
             final_filtered_df = final_filtered_df.drop(columns=["Keep"])
             
             # Save the curated list to session state for the next steps
             st.session_state['filtered_results'] = final_filtered_df
             
-            st.success(f"Filtered list saved! You kept {len(final_filtered_df)} out of {len(edited_df)} papers.")
+            st.success(f"Filtered list saved! You kept {len(final_filtered_df)} out of {len(master_df)} total papers.")
             st.info("You can now proceed to Step 3: Export Data.")
             
         # Quick preview of the current saved filtered list if it exists
