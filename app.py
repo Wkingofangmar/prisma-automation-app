@@ -21,44 +21,61 @@ st.divider()
 
 # Core Function: Search OpenAlex
 # Core Function: Search OpenAlex
+# Core Function: Search OpenAlex
 def search_openalex(query):
     try:
-        # Fetch the works matching the search query
-        query_result = Works().search(query).paginate(per_page=50, page=1)
+        # Fetch up to 100 results natively. .get() is much safer than .paginate() for single batches.
+        # OpenAlex's .search() automatically looks through full text, titles, and abstracts.
+        query_result = Works().search(query).get(per_page=100)
         
+        # Safety catch: ensuring we are working with the list of results
+        if isinstance(query_result, dict) and "results" in query_result:
+            query_result = query_result["results"]
+        elif isinstance(query_result, tuple):
+            query_result = query_result[0]
+            
         data = []
         for res in query_result:
-            # FIXED: Changed 'authorship' to 'authorships' in the list comprehension and condition
-            authorships = res.get("authorships", []) if isinstance(res, dict) else getattr(res, "authorships", [])
-            author_names = [a.get("author", {}).get("display_name", "") for a in authorships] if authorships else []
-            author_string = ", ".join(filter(None, author_names))
+            # Skip any malformed API entries
+            if not isinstance(res, dict):
+                continue
+                
+            # 1. Safely extract authors (OpenAlex often returns None instead of empty lists)
+            authorships = res.get("authorships") or []
+            author_names = []
+            for a in authorships:
+                author_data = a.get("author") or {}
+                name = author_data.get("display_name")
+                if name:
+                    author_names.append(name)
+            author_string = ", ".join(author_names) if author_names else "Unknown Authors"
             
-            # Safely extract journal/source name
-            primary_location = res.get("primary_location", {}) if isinstance(res, dict) else getattr(res, "primary_location", {})
-            primary_location = primary_location or {}
-            source = primary_location.get("source", {}) if isinstance(primary_location, dict) else getattr(primary_location, "source", {})
-            source = source or {}
-            journal_name = source.get("display_name", "Unknown Journal") if isinstance(source, dict) else getattr(source, "display_name", "Unknown Journal")
+            # 2. Safely extract journal/source
+            primary_location = res.get("primary_location") or {}
+            source = primary_location.get("source") or {}
+            journal_name = source.get("display_name") or "Unknown Journal"
             
-            # Safely get metadata fields
-            title = res.get("title", "No Title") if isinstance(res, dict) else getattr(res, "title", "No Title")
-            year = res.get("publication_year", "N/A") if isinstance(res, dict) else getattr(res, "publication_year", "N/A")
-            doi = res.get("doi", "No DOI") if isinstance(res, dict) else getattr(res, "doi", "No DOI")
+            # 3. Safely get metadata fields (using 'or' catches the 'None' values)
+            title = res.get("title") or "No Title"
+            year = res.get("publication_year") or "N/A"
+            doi = res.get("doi") or "No DOI"
 
+            # 4. Append to data list with forced string conversion so Streamlit never renders a blank None type
             data.append({
-                "Keep": True,  # Checkbox for Step 2
-                "Title": title,
-                "Author(s)": author_string if author_string else "Unknown Authors",
-                "Year": year,
-                "Journal": journal_name,
-                "DOI": doi
+                "Keep": True,
+                "Title": str(title),
+                "Author(s)": str(author_string),
+                "Year": str(year),
+                "Journal": str(journal_name),
+                "DOI": str(doi)
             })
         
         return pd.DataFrame(data)
+    
     except Exception as e:
         st.error(f"An error occurred during the search: {e}")
         import traceback
-        st.code(traceback.format_exc()) 
+        st.code(traceback.format_exc())
         return pd.DataFrame()
 
 # STEP 1: SEARCH DATABASES
