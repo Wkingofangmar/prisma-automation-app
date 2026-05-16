@@ -462,23 +462,20 @@ elif step == "5. PDF LLM Extraction":
         else:
             with st.spinner("Analyzing PDF... (Running OCR, translation, and data extraction)"):
                 try:
-                    import google.generativeai as genai
+                    from google import genai
                     import tempfile
                     import os
                     
-                    # Configure the API
-                    genai.configure(api_key=api_key)
+                    # 1. Initialize the new modern client
+                    client = genai.Client(api_key=api_key)
                     
                     # The Gemini File API requires a file path, so we temporarily save the Streamlit upload
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                         tmp_file.write(uploaded_file.getvalue())
                         tmp_file_path = tmp_file.name
 
-                    # Upload the document to Gemini's secure temporary storage
-                    gemini_file = genai.upload_file(path=tmp_file_path)
-                    
-                    # Initialize the model (1.5 Flash is incredibly fast and perfect for this)
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    # 2. Upload using the new client's files service
+                    gemini_file = client.files.upload(file=tmp_file_path)
                     
                     # Your exact prompt with the dynamic subject injected
                     prompt = f"""You are an expert researcher. Extract the primary research data specifically related to the [{research_subject}] from the provided paper.
@@ -499,11 +496,14 @@ Primary Theme: You MUST choose exactly ONE of the following exact phrases. It is
 Key Finding: A very brief, 1-to-2 sentence summary of this specific paper's primary conclusion.
 Only provide the 1-row table in your response, with no extra conversational text."""
 
-                    # Generate the extraction
-                    response = model.generate_content([gemini_file, prompt])
+                    # 3. Generate the content using the active gemini-2.5-flash model
+                    response = client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=[gemini_file, prompt]
+                    )
                     
-                    # Clean up: delete the file from Google's servers and your app's temporary local storage
-                    genai.delete_file(gemini_file.name)
+                    # 4. Clean up: delete the file from Google's servers and your app's temporary local storage
+                    client.files.delete(name=gemini_file.name)
                     os.remove(tmp_file_path)
                     
                     st.success("Extraction Complete!")
