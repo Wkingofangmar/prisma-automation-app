@@ -5,3 +5,4 @@ requests
 biopython
 google-genai
 openpyxl
+docxtpl
