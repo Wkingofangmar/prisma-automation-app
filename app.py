@@ -335,6 +335,7 @@ if step == "1. Search Databases":
                     
                     st.session_state['raw_results'] = combined_df
                     st.session_state['prisma_stats']['records_identified'] = len(combined_df)
+                    st.session_state['prisma_stats']['db_counts'] = combined_df['Source'].value_counts().to_dict()
                     st.success(f"Found {len(combined_df)} unique records!")
                 else:
                     st.info("No results found.")
@@ -584,30 +585,121 @@ elif step == "6. Generate PRISMA Flowchart":
     
     stats = st.session_state['prisma_stats']
     
+    # --- CALCULATE PRISMA 2020 EXACT METRICS ---
+    
+    # 1. Identification
+    records_identified = stats.get('records_identified', 0)
+    
+    # Format the database breakdown (e.g., "OpenAlex (n=150), PubMed (n=50)")
+    db_counts = stats.get('db_counts', {})
+    db_breakdown = ", ".join([f"{db} (n={count})" for db, count in db_counts.items()])
+    if not db_breakdown: db_breakdown = f"(n = {records_identified})"
+    
+    # 2. Removal
+    duplicates_removed = stats.get('duplicates_removed', 0)
+    
+    # 3. Screening
+    records_screened = records_identified - duplicates_removed
+    records_excluded = stats.get('step2_excluded', 0) + stats.get('step4_excluded', 0)
+    
+    # 4. Retrieval (Entering Step 5)
+    reports_sought = records_screened - records_excluded
+    
+    # 5. Eligibility & Inclusion (Based on Step 5 AI Extraction Dashboard)
+    reports_not_retrieved = 0
+    reports_assessed = reports_sought
+    reports_excluded_reasons = 0
+    final_included = reports_sought # Default if Step 5 hasn't been touched
+    
+    if 'extraction_status' in st.session_state:
+        status_df = st.session_state['extraction_status']
+        # Not retrieved = Papers you couldn't find PDFs for (Pending or Paywalled)
+        reports_not_retrieved = len(status_df[status_df['Status'].isin(['Pending', '🔒 Paywalled (Manual)'])])
+        # Assessed = Papers that were successfully uploaded to the AI
+        reports_assessed = reports_sought - reports_not_retrieved
+        # Excluded = Papers where AI failed to parse or API crashed
+        reports_excluded_reasons = len(status_df[status_df['Status'].isin(['⚠️ Parse Error', '❌ API Error'])])
+        # Final Included = Successful extractions
+        final_included = len(status_df[status_df['Status'] == '✅ Success'])
+
+    # --- EDITABLE WORD DOCUMENT EXPORT ---
+    st.write("### 📥 Download Editable Word Document")
+    st.write("For publication, you need an editable Word document. Download the official PRISMA template pre-filled with your exact numbers.")
+    
+    try:
+        from docxtpl import DocxTemplate
+        import io
+        import os
+        
+        template_path = "PRISMA_template.docx"
+        
+        if os.path.exists(template_path):
+            doc = DocxTemplate(template_path)
+            
+            # Map the tags in the Word doc to our Python variables
+            context = {
+                'db_breakdown': db_breakdown,
+                'records_identified': records_identified,
+                'duplicates_removed': duplicates_removed,
+                'records_screened': records_screened,
+                'records_excluded': records_excluded,
+                'reports_sought': reports_sought,
+                'reports_not_retrieved': reports_not_retrieved,
+                'reports_assessed': reports_assessed,
+                'reports_excluded_reasons': reports_excluded_reasons,
+                'final_included': final_included
+            }
+            
+            doc.render(context)
+            
+            bio = io.BytesIO()
+            doc.save(bio)
+            
+            st.download_button(
+                label="📄 Download Editable PRISMA Flowchart (.docx)",
+                data=bio.getvalue(),
+                file_name="PRISMA_Flowchart_Filled.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                type="primary"
+            )
+            st.success("Template found and ready for download!")
+        else:
+            st.warning("⚠️ `PRISMA_template.docx` not found. Please upload the tagged Word template to your GitHub repository to enable Word exports.")
+            
+    except ImportError:
+        st.error("Please add `docxtpl` to your requirements.txt file to enable Word document generation.")
+        
+    # --- VISUAL WEB PREVIEW ---
+    st.divider()
+    st.write("### Web Preview")
     dot_string = f"""
     digraph PRISMA {{
         node [shape=box, fontname="Helvetica", fontsize=10, style="rounded,filled", fillcolor="#f9f9f9", color="#333333"];
         edge [fontname="Helvetica", fontsize=10, color="#666666"];
         
-        Identification [label="Records identified from databases\\n(n = {stats['records_identified']})", fillcolor="#d4edda"];
-        Duplicates [label="Records removed before screening:\\nDuplicate records removed (n = {stats['duplicates_removed']})", fillcolor="#f8d7da"];
-        Screening1 [label="Records screened manually (Step 2)\\n(n = {stats['records_identified'] - stats['duplicates_removed']})"];
-        Excluded1 [label="Records excluded manually\\n(n = {stats['step2_excluded']})", fillcolor="#f8d7da"];
-        Screening2 [label="Records sought for retrieval (Step 4)\\n(n = {stats['records_identified'] - stats['duplicates_removed'] - stats['step2_excluded']})"];
-        Excluded2 [label="Records excluded via Keyword/Abstract\\n(n = {stats['step4_excluded']})", fillcolor="#f8d7da"];
-        Included [label="Studies included in review\\n(n = {stats['final_included']})", fillcolor="#d1ecf1"];
+        Identification [label="Records identified\\n{db_breakdown}", fillcolor="#d4edda"];
+        Duplicates [label="Duplicate records removed\\n(n = {duplicates_removed})", fillcolor="#f8d7da"];
+        Screening1 [label="Records screened\\n(n = {records_screened})"];
+        Excluded1 [label="Records excluded manually\\n(n = {records_excluded})", fillcolor="#f8d7da"];
+        Screening2 [label="Reports sought for retrieval\\n(n = {reports_sought})"];
+        Excluded2 [label="Reports not retrieved\\n(n = {reports_not_retrieved})", fillcolor="#f8d7da"];
+        Assessed [label="Reports assessed for eligibility\\n(n = {reports_assessed})"];
+        Excluded3 [label="Reports excluded\\n(n = {reports_excluded_reasons})", fillcolor="#f8d7da"];
+        Included [label="Studies included in review\\n(n = {final_included})", fillcolor="#d1ecf1"];
         
         Identification -> Duplicates [label=" Deduplication"];
         Identification -> Screening1;
         Screening1 -> Excluded1 [label=" Excluded"];
         Screening1 -> Screening2;
-        Screening2 -> Excluded2 [label=" Excluded"];
-        Screening2 -> Included;
+        Screening2 -> Excluded2 [label=" Not Retrieved"];
+        Screening2 -> Assessed;
+        Assessed -> Excluded3 [label=" Excluded"];
+        Assessed -> Included;
         
         {{rank=same; Screening1 Excluded1}}
         {{rank=same; Screening2 Excluded2}}
+        {{rank=same; Assessed Excluded3}}
     }}
     """
-    
     st.graphviz_chart(dot_string, use_container_width=True)
-    st.info("💡 **Tip:** You can right-click the image above and select 'Save Image As...' to download it for your publication.")
+    st.info("💡 **Tip:** Always double check the numbers manually)
