@@ -437,6 +437,8 @@ elif step == "4. Deduplicate & Screen (In-App Route)":
         
         st.write("### 1. Deep Duplicate Checker")
         df_screen['temp_title'] = df_screen['Title'].str.lower().str.strip()
+        
+        # Find ALL duplicates to display them in the table
         title_dupes = df_screen.duplicated(subset=['temp_title'], keep=False)
         doi_dupes = df_screen.duplicated(subset=['DOI'], keep=False) & (df_screen['DOI'] != "No DOI")
         
@@ -444,6 +446,22 @@ elif step == "4. Deduplicate & Screen (In-App Route)":
         
         if not duplicates_df.empty:
             st.warning(f"Found {len(duplicates_df)} potential duplicate records! They are grouped together below.")
+            
+            # --- NEW: AUTO-RESOLVE BUTTON ---
+            if st.button("🤖 Auto-Resolve Duplicates (Keep First)", type="primary", help="Automatically unchecks redundant copies, keeping only one version of each paper."):
+                # Find the duplicates but KEEP the first occurrence. 
+                # This creates a mask of only the REDUNDANT rows that need to be thrown out.
+                discard_title = df_screen.duplicated(subset=['temp_title'], keep='first')
+                discard_doi = df_screen.duplicated(subset=['DOI'], keep='first') & (df_screen['DOI'] != "No DOI")
+                
+                # Set 'Screening_Keep' to False for all redundant rows
+                st.session_state['screening_data'].loc[discard_title | discard_doi, 'Screening_Keep'] = False
+                
+                # Rerun the app to refresh the table UI
+                st.rerun()
+                
+            st.write("Review the duplicates below. You can use the Auto-Resolve button above, or manually uncheck the 'Keep?' box for the versions you want to discard.")
+            
             edited_dupes = st.data_editor(
                 duplicates_df,
                 column_config={"Screening_Keep": st.column_config.CheckboxColumn("Keep?", default=True)},
@@ -451,6 +469,7 @@ elif step == "4. Deduplicate & Screen (In-App Route)":
                 disabled=["Title", "Author(s)", "Year", "Journal", "Abstract", "Keywords", "DOI", "Source", "temp_title"],
                 hide_index=True, use_container_width=True
             )
+            # Sync any manual clicks back to the session state
             st.session_state['screening_data'].loc[edited_dupes.index, 'Screening_Keep'] = edited_dupes['Screening_Keep']
         else:
             st.success("No duplicates found!")
@@ -502,7 +521,6 @@ elif step == "4. Deduplicate & Screen (In-App Route)":
             st.write("### Final Curated List Ready")
             csv_data = st.session_state['screened_results'].to_csv(index=False).encode('utf-8')
             st.download_button(label="📄 Download Final Screened CSV", data=csv_data, file_name="PRISMA_Final_Screened.csv", mime="text/csv", use_container_width=True)
-
 # ==========================================
 # STEP 5: PDF LLM EXTRACTION
 # ==========================================
