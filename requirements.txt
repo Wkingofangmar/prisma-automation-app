@@ -3,3 +3,5 @@ pandas
 pyalex
 openpyxl
 google-genai
+requests
+biopython
