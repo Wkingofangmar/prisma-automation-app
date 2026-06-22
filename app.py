@@ -5,7 +5,6 @@ import time
 import io
 import os
 import tempfile
-import re
 from pyalex import Works
 from Bio import Entrez
 
@@ -39,7 +38,7 @@ step = st.sidebar.radio("Select a step:", [
 st.divider()
 
 # ==========================================
-# HELPER FUNCTIONS & DATABASE ENGINES
+# HELPER FUNCTIONS 
 # ==========================================
 
 def reconstruct_abstract(inverted_index):
@@ -52,7 +51,6 @@ def parse_markdown_table(md_text):
     """Parses the strict Markdown table returned by Gemini into a list of values."""
     lines = md_text.strip().split('\n')
     for line in lines:
-        # Look for the data row (starts with |, doesn't contain ---, doesn't contain the header 'Study')
         if line.strip().startswith('|') and '---' not in line and 'Study' not in line:
             cols = [c.strip() for c in line.split('|')[1:-1]]
             if len(cols) == 5:
@@ -64,7 +62,6 @@ def download_pdf(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10, stream=True)
-        # Check if the response is actually a PDF and not a publisher's HTML landing page
         if 'application/pdf' in response.headers.get('Content-Type', '').lower():
             tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             for chunk in response.iter_content(chunk_size=8192):
@@ -74,6 +71,10 @@ def download_pdf(url):
     except Exception:
         pass
     return None
+
+# ==========================================
+# DATABASE ENGINES
+# ==========================================
 
 def search_openalex(query, max_results):
     try:
@@ -90,8 +91,6 @@ def search_openalex(query, max_results):
                 authorships = res.get("authorships") or []
                 author_names = [a.get("author", {}).get("display_name") for a in authorships if a.get("author", {}).get("display_name")]
                 journal_name = res.get("primary_location", {}).get("source", {}).get("display_name") or "Unknown Journal"
-                
-                # Extract Open Access PDF URL if available
                 oa_url = res.get("open_access", {}).get("oa_url")
                 
                 data.append({
@@ -139,7 +138,6 @@ def search_pubmed(query, max_results, email):
                     if article_id.attributes.get('IdType') == 'doi':
                         doi = f"https://doi.org/{str(article_id)}"
                     elif article_id.attributes.get('IdType') == 'pmc':
-                        # Construct direct EuropePMC PDF link using the PMC ID
                         pmc_url = f"https://europepmc.org/backend/ptpmcrender.fcgi?accid={str(article_id).upper()}&blobtype=pdf"
                         
                 data.append({
@@ -183,6 +181,99 @@ def search_semanticscholar(query, max_results):
         st.error(f"Semantic Scholar Error: {e}")
         return pd.DataFrame()
 
+def search_crossref(query, max_results):
+    url = "https://api.crossref.org/works"
+    params = {"query": query, "rows": min(max_results, 1000)}
+    try:
+        response = requests.get(url, params=params).json()
+        data = []
+        for item in response.get('message', {}).get('items', []):
+            authors = ", ".join([f"{a.get('given', '')} {a.get('family', '')}".strip() for a in item.get('author', [])])
+            year = item.get('published-print', {}).get('date-parts', [[None]])[0][0]
+            if not year: year = item.get('created', {}).get('date-parts', [[None]])[0][0]
+            
+            doi = item.get('DOI')
+            doi_str = f"https://doi.org/{doi}" if doi else "No DOI"
+            
+            # Hunt for OA PDF link in Crossref
+            oa_url = None
+            for link in item.get('link', []):
+                if link.get('content-type') == 'application/pdf':
+                    oa_url = link.get('URL')
+                    break
+            
+            data.append({
+                "Keep": True, "Title": item.get('title', ['No Title'])[0],
+                "Author(s)": authors or "Unknown Authors", "Year": str(year) if year else "N/A",
+                "Journal": item.get('container-title', ['Unknown Journal'])[0],
+                "Abstract": item.get('abstract', 'No abstract available.'),
+                "Keywords": "N/A", "DOI": doi_str, "PDF_URL": oa_url, "Source": "Crossref"
+            })
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"Crossref Error: {e}")
+        return pd.DataFrame()
+
+def search_europepmc(query, max_results):
+    url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+    params = {"query": query, "format": "json", "resultType": "core", "pageSize": min(max_results, 1000)}
+    try:
+        response = requests.get(url, params=params).json()
+        data = []
+        for item in response.get('resultList', {}).get('result', []):
+            doi = item.get('doi')
+            doi_str = f"https://doi.org/{doi}" if doi else "No DOI"
+            
+            kw_data = item.get('keywordList', {}).get('keyword', [])
+            keywords = "; ".join(kw_data) if isinstance(kw_data, list) else str(kw_data)
+            
+            pmcid = item.get('pmcid')
+            oa_url = f"https://europepmc.org/backend/ptpmcrender.fcgi?accid={pmcid}&blobtype=pdf" if pmcid else None
+            
+            data.append({
+                "Keep": True, "Title": item.get('title', 'No Title'),
+                "Author(s)": item.get('authorString', 'Unknown Authors'),
+                "Year": str(item.get('pubYear', 'N/A')),
+                "Journal": item.get('journalTitle', 'Unknown Journal'),
+                "Abstract": item.get('abstractText', 'No abstract available.'),
+                "Keywords": keywords if keywords else "N/A",
+                "DOI": doi_str, "PDF_URL": oa_url, "Source": "Europe PMC"
+            })
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"Europe PMC Error: {e}")
+        return pd.DataFrame()
+
+def search_scopus(query, max_results, api_key):
+    if not api_key: return pd.DataFrame()
+    url = "https://api.elsevier.com/content/search/scopus"
+    headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
+    data, start = [], 0
+    try:
+        while len(data) < max_results:
+            params = {"query": query, "count": min(25, max_results - len(data)), "start": start}
+            response = requests.get(url, headers=headers, params=params).json()
+            entries = response.get('search-results', {}).get('entry', [])
+            if not entries: break
+            
+            for item in entries:
+                doi = item.get('prism:doi')
+                doi_str = f"https://doi.org/{doi}" if doi else "No DOI"
+                
+                data.append({
+                    "Keep": True, "Title": item.get('dc:title', 'No Title'),
+                    "Author(s)": item.get('dc:creator', 'Unknown Authors'),
+                    "Year": str(item.get('prism:coverDate', 'N/A'))[:4],
+                    "Journal": item.get('prism:publicationName', 'Unknown Journal'),
+                    "Abstract": "N/A (Scopus requires Full Text API)",
+                    "Keywords": "N/A", "DOI": doi_str, "PDF_URL": None, "Source": "Scopus"
+                })
+            start += 25
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"Scopus Error: {e}")
+        return pd.DataFrame()
+
 # ==========================================
 # STEP 1: SEARCH DATABASES
 # ==========================================
@@ -192,23 +283,46 @@ if step == "1. Search Databases":
     search_query = st.text_input("Enter your search keywords:", placeholder="e.g., 'Microplastic ingestion sea turtles'")
     max_results_limit = st.slider("Max results PER DATABASE:", min_value=100, max_value=2000, value=500, step=100)
     
-    col1, col2 = st.columns(2)
+    st.write("### Select Databases to Query")
+    col1, col2, col3 = st.columns(3)
     with col1:
         use_openalex = st.checkbox("OpenAlex (Multidisciplinary)", value=True)
         use_pubmed = st.checkbox("PubMed (Life Sciences/Medicine)", value=True)
     with col2:
         use_s2 = st.checkbox("Semantic Scholar (AI Graph)", value=True)
-        pubmed_email = st.text_input("PubMed Email (Required by NCBI):", placeholder="your.email@example.com") if use_pubmed else ""
+        use_crossref = st.checkbox("Crossref (DOI Registry)")
+    with col3:
+        use_epmc = st.checkbox("Europe PMC (Life Sciences)")
+        use_scopus = st.checkbox("Scopus (Requires API Key)")
+        
+    pubmed_email = st.text_input("PubMed Email (Required by NCBI):", placeholder="your.email@example.com") if use_pubmed else ""
+    scopus_key = st.text_input("Scopus API Key (Institutional):", type="password") if use_scopus else ""
     
     if st.button("Run Multi-Database Search", type="primary"):
         if not search_query.strip(): st.warning("Please enter a keyword.")
         elif use_pubmed and not pubmed_email: st.warning("Please enter an email for PubMed.")
+        elif use_scopus and not scopus_key: st.warning("Please enter a Scopus API Key.")
         else:
             all_results = []
             with st.spinner("Querying databases & extracting Open Access links..."):
-                if use_openalex: all_results.append(search_openalex(search_query, max_results_limit))
-                if use_pubmed: all_results.append(search_pubmed(search_query, max_results_limit, pubmed_email))
-                if use_s2: all_results.append(search_semanticscholar(search_query, max_results_limit))
+                if use_openalex: 
+                    st.toast("Querying OpenAlex...")
+                    all_results.append(search_openalex(search_query, max_results_limit))
+                if use_pubmed: 
+                    st.toast("Querying PubMed...")
+                    all_results.append(search_pubmed(search_query, max_results_limit, pubmed_email))
+                if use_s2: 
+                    st.toast("Querying Semantic Scholar...")
+                    all_results.append(search_semanticscholar(search_query, max_results_limit))
+                if use_crossref: 
+                    st.toast("Querying Crossref...")
+                    all_results.append(search_crossref(search_query, max_results_limit))
+                if use_epmc: 
+                    st.toast("Querying Europe PMC...")
+                    all_results.append(search_europepmc(search_query, max_results_limit))
+                if use_scopus: 
+                    st.toast("Querying Scopus...")
+                    all_results.append(search_scopus(search_query, max_results_limit, scopus_key))
                 
                 combined_df = pd.concat([df for df in all_results if not df.empty], ignore_index=True)
                 
@@ -350,7 +464,6 @@ elif step == "5. AI Extraction Dashboard":
     if 'screened_results' not in st.session_state:
         st.warning("Please complete Step 4 first.")
     else:
-        # Initialize extraction tracking
         if 'extraction_status' not in st.session_state:
             df = st.session_state['screened_results'].copy()
             df['Status'] = "Pending"
@@ -366,7 +479,6 @@ elif step == "5. AI Extraction Dashboard":
         
         col1, col2 = st.columns(2)
         
-        # --- FEATURE: AUTO-FETCH OPEN ACCESS ---
         with col1:
             st.write("#### Auto-Process Open Access")
             if st.button("🤖 Auto-Fetch & Extract OA Papers", type="primary"):
@@ -410,10 +522,9 @@ elif step == "5. AI Extraction Dashboard":
                                 st.session_state['extraction_status'].at[idx, 'Status'] = "🔒 Paywalled (Manual)"
                             
                             progress_bar.progress((i + 1) / len(pending_oa))
-                            time.sleep(2) # Prevent rate limiting
+                            time.sleep(2) 
                         st.rerun()
 
-        # --- FEATURE: MANUAL UPLOAD FALLBACK ---
         with col2:
             st.write("#### Manual Upload (Paywalled Papers)")
             pending_manual = status_df[status_df['Status'] != '✅ Success']
@@ -455,7 +566,6 @@ elif step == "5. AI Extraction Dashboard":
             else:
                 st.success("All papers successfully extracted!")
 
-        # --- FEATURE: FINAL DATA MATRIX EXPORT ---
         st.divider()
         st.write("### Final Extracted Data Matrix")
         if st.session_state['extracted_data_matrix']:
@@ -474,7 +584,6 @@ elif step == "6. Generate PRISMA Flowchart":
     
     stats = st.session_state['prisma_stats']
     
-    # Create the Graphviz DOT string
     dot_string = f"""
     digraph PRISMA {{
         node [shape=box, fontname="Helvetica", fontsize=10, style="rounded,filled", fillcolor="#f9f9f9", color="#333333"];
@@ -500,7 +609,5 @@ elif step == "6. Generate PRISMA Flowchart":
     }}
     """
     
-    # Render the flowchart natively in Streamlit
     st.graphviz_chart(dot_string, use_container_width=True)
-    
     st.info("💡 **Tip:** You can right-click the image above and select 'Save Image As...' to download it for your publication.")
