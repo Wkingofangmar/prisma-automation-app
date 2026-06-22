@@ -88,25 +88,49 @@ def search_openalex(query, max_results):
                 
             for res in batch:
                 if not isinstance(res, dict): continue
+                
+                # 1. Safely extract authors
                 authorships = res.get("authorships") or []
-                author_names = [a.get("author", {}).get("display_name") for a in authorships if a.get("author", {}).get("display_name")]
-                journal_name = res.get("primary_location", {}).get("source", {}).get("display_name") or "Unknown Journal"
-                oa_url = res.get("open_access", {}).get("oa_url")
+                author_names = []
+                for a in authorships:
+                    if isinstance(a, dict):
+                        author_data = a.get("author") or {}
+                        name = author_data.get("display_name")
+                        if name:
+                            author_names.append(name)
+                
+                # 2. Safely extract journal/source
+                primary_location = res.get("primary_location") or {}
+                source = primary_location.get("source") or {}
+                journal_name = source.get("display_name") or "Unknown Journal"
+                
+                # 3. Safely extract Open Access URL
+                open_access = res.get("open_access") or {}
+                oa_url = open_access.get("oa_url")
+                
+                # 4. Safely extract Keywords
+                raw_keywords = res.get("keywords") or []
+                keywords = "; ".join([kw.get("display_name") for kw in raw_keywords if isinstance(kw, dict) and kw.get("display_name")])
                 
                 data.append({
-                    "Keep": True, "Title": str(res.get("title") or "No Title"),
+                    "Keep": True, 
+                    "Title": str(res.get("title") or "No Title"),
                     "Author(s)": ", ".join(author_names) if author_names else "Unknown Authors",
                     "Year": str(res.get("publication_year") or "N/A"),
                     "Journal": str(journal_name), 
                     "Abstract": str(reconstruct_abstract(res.get("abstract_inverted_index"))),
-                    "Keywords": "; ".join([kw.get("display_name") for kw in res.get("keywords", []) if kw.get("display_name")]) or "N/A", 
+                    "Keywords": keywords if keywords else "N/A", 
                     "DOI": str(res.get("doi") or "No DOI"),
-                    "PDF_URL": oa_url, "Source": "OpenAlex"
+                    "PDF_URL": oa_url, 
+                    "Source": "OpenAlex"
                 })
+                
                 if len(data) >= max_results: break
             if len(data) >= meta.get("count", 0) or len(data) >= max_results: break
             page += 1
+            
         return pd.DataFrame(data)
+        
     except Exception as e:
         st.error(f"OpenAlex Error: {e}")
         return pd.DataFrame()
