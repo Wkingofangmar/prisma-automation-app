@@ -702,4 +702,4 @@ elif step == "6. Generate PRISMA Flowchart":
     }}
     """
     st.graphviz_chart(dot_string, use_container_width=True)
-    st.info("💡 **Tip:** Always double check the numbers manually)
+    st.info("💡 **Tip:** Always double check the numbers manually")
