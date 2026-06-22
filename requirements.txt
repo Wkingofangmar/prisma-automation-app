@@ -1,7 +1,7 @@
 streamlit
 pandas
 pyalex
-openpyxl
-google-genai
 requests
 biopython
+google-genai
+openpyxl
